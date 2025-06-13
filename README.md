@@ -169,62 +169,61 @@ def aggregate_fit(
 
 ## 📊 Performance Summary
 
-### By Malicious Client Ratio (α = 10, FedAvg)
+### FedAvg variants (α = 10, FedAvg)
 
 | Ratio | Train Acc | Val Acc | Train Loss | Val Loss |
 |-------|-----------|---------|------------|----------|
-| 0%    | 0.88      | 0.86    | 0.37       | 0.48     |
-| 25%   | 0.85      | 0.82    | 0.45       | 0.55     |
-| 50%   | 0.78      | 0.70    | 0.60       | 0.80     |
+| 0%    | 0.87      | 0.84    | 0.47       | 0.35     |
+| 25%   | 0.73      | 0.86    | 0.70       | 0.49     |
+| 50%   | 0.58      | 0.85    | 0.92       | 0.75     |
 
-### By Aggregation Method (α = 10, 25% Malicious)
+### By Aggregation Method & Data poison(α = 10, 50% Malicious clients)
 
 | Method  | Train Acc | Val Acc | Train Loss | Val Loss |
 |---------|-----------|---------|------------|----------|
-| FedAvg  | 0.85      | 0.82    | 0.45       | 0.55     |
-| FedMedian | 0.87    | 0.84    | 0.40       | 0.50     |
-| Krum    | 0.86      | 0.83    | 0.42       | 0.52     |
+| FedAvg  | 0.58      | 0.85    | 0.92       | 0.75     |
+| FedMedian | 0.56    | 0.86    | 1.02       | 0.56     |
+| Krum    | 0.66      | 0.86    | 0.81       | 0.47     |
+
+
+### By Aggregation Method & Model poison(α = 10, 50% Malicious clients) and 10 times shift
+
+| Method  | Train Acc | Val Acc | Train Loss | Val Loss |
+|---------|-----------|---------|------------|----------|
+| FedAvg  | 0.10      | 0.10    | Nan       | Nan     |
+| FedMedian | 0.37    | 0.46    | 6.42      | 3.9     |
+| Krum    | 044      | 0.63    | 6.68       | 1.9     |
 
 *Note: Results are approximate due to limited rounds (30) and sampling (5/10 clients).*
 
 ---
 
-## 📈 Training Dynamics (Visuals)
+# Training Dynamics Analysis
 
-*Placeholder for training plots, as actual plots are not provided. Below is a conceptual description based on typical behavior.*
+## 📈 Training and Validation Accuracy Comparison
 
-![Training comparison](Compare/alpha/alpha_comparison.png)
-![Training comparison](Compare/attack_ratio/train_val_accuracy_comparison.png)
+### Images Provided
+![Training and Validation Accuracy Comparison (FedAvg, FedMedian, Krum)](Compare/compare_fedavg_variants.png)
 
-### 🔹 0% Malicious (α = 10)
+- FedAvg performance decreases as there is a client who is poisonous is increased. the above graph shows FedAvg with different state. the poisoned clients are the 50% of the total clients done manually while running clients.
 
-> *Stable convergence across FedAvg, FedMedian, and Krum with no adversarial impact.*
 
-### 🔹 25% Malicious (α = 10, Data Poisoning)
+![Training and Validation Accuracy Comparison (Defenses - Model Poisoning)](Compare/compare_defenses_model_poison.png)
 
-> *FedAvg shows moderate degradation; FedMedian and Krum stabilize performance by filtering outliers.*
+- The above graph is Model Poisoning
+-We can notice that all Strategies performs low due to the poisonous of the 50% clients. but even though we can notice that FedAvg performs the worest.
 
-### 🔹 50% Malicious (α = 10, Model Poisoning)
 
-> *FedAvg diverges significantly; FedMedian mitigates damage, while Krum’s performance varies with f estimation.*
+![Training and Validation Accuracy Comparison (Defenses - Data Poisoning)](Compare/compare_defenses_data_poison.png)
 
----
+- The above graph shows the same for Data poisioning.
 
-## 💡 Key Observations
 
-1. **No Malicious Clients (0%)**:
-   - All methods perform reliably, with FedAvg showing smooth convergence.
+### 💡 Key Observations
+1. **No Malicious Clients (0%)**: All methods perform reliably, with FedAvg showing the highest stability.
+2. **Moderate Malicious Ratio (25%)**: Data poisoning moderately degrades FedAvg; FedMedian and Krum likely outperform by reducing malicious effects.
+3. **High Malicious Ratio (50%)**: FedAvg becomes unstable with both attack types; FedMedian remains robust.
 
-2. **Moderate Malicious Ratio (25%)**:
-   - Data poisoning reduces accuracy slightly; model poisoning has a stronger impact due to unresolved errors.
-   - FedMedian and Krum outperform FedAvg by reducing malicious update effects.
-
-3. **High Malicious Ratio (50%)**:
-   - FedAvg becomes unstable with both attack types.
-   - FedMedian remains robust; Krum’s effectiveness depends on correct f tuning.
-
-4. **Heterogeneity Impact**:
-   - Limited testing with α = 1 and 0.1 suggests higher heterogeneity increases vulnerability, with robust methods showing mixed results due to constraints.
 
 ---
 
@@ -266,6 +265,5 @@ python main.py simulate --num-clients 10 --rounds 30 --strategy fedavg --malicio
 ---
 
 ## 📝 Conclusion
-
-This unified implementation of **FedAvg**, **FedMedian**, and **Krum** demonstrates FedAvg’s vulnerability to data and model poisoning attacks, especially at higher malicious ratios. **FedMedian** and **Krum** offer robust defenses, with FedMedian showing consistent resilience and Krum requiring careful f tuning. However, due to time constraints, limited rounds (30), and sampling (5/10 clients), results are suboptimal, with model poisoning errors and unexpected outcomes indicating areas for improvement. Future work should increase rounds, resolve errors, and test across more heterogeneity levels (α = 1, 0.1).
+- **Truth**: FedAvg is highly vulnerable to data and model poisoning, especially at 50% malicious clients, with accuracy dropping sharply. FedMedian consistently outperforms FedAvg, maintaining stability, while Krum's effectiveness is unclear due to limited data. The 30-round limit and sampling (5/10 clients) contribute to suboptimal results. 
 

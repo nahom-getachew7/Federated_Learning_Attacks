@@ -49,15 +49,15 @@ def compare_multiple_results(file_label_map: Dict[str, str], fig_dir: str = "./C
     plt.grid(True)
     
     plt.tight_layout()
-    plt.savefig(os.path.join(fig_dir, "compare_fedavg_variants.png"))
+    plt.savefig(os.path.join(fig_dir, "compare_defenses_model_poison.png"))
     plt.close()
 
 
 if __name__ == "__main__":
     file_label_map = {
-        "FedAvg_pure.json": "FedAvg (Pure)",
-        "FedAvg_data_poision_50.json": "FedAvg (Data Poison)",
-        "FedAvg_model_poision_50.json": "FedAvg (Model Poison)"
+        "FedAvg_model_poision_50.json": "FedAvg",
+        "fedmedian_model_poision.json": "FedMedian",
+        "krum_model_poision.json": "Krum"
     }
 
     compare_multiple_results(file_label_map)
