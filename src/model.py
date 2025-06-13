@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import List, Tuple
+from typing import Callable, List, Optional, Tuple
 from torch.utils.data import DataLoader
 import torch
 
@@ -34,7 +34,9 @@ class CustomFashionModel(nn.Module):
         train_loader: DataLoader,
         criterion: nn.Module,
         optimizer: torch.optim.Optimizer,
-        device: torch.device
+        device: torch.device,
+        attack_type: str = "none",
+        poison_fn: Optional[Callable] = None
     ) -> Tuple[float, float]:
         self.train()
         total_loss = 0.0
@@ -43,6 +45,11 @@ class CustomFashionModel(nn.Module):
         
         for data, target in train_loader:
             data, target = data.to(device), target.to(device)
+            
+            # Apply data poisoning if specified
+            if attack_type == "data" and poison_fn is not None:
+                target = poison_fn(target)
+            
             optimizer.zero_grad()
             output = self(data)
             loss = criterion(output, target)

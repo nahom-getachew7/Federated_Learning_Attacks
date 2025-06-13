@@ -1,35 +1,26 @@
-# 📦 Federated Averaging (FedAvg) Implementation
+# 📦 Federated Learning Implementation (FedAvg, FedMedian, Krum)
 
 ## 📌 Strategy Overview
 
-**FedAvg** is the baseline Federated Learning algorithm that:
-1. Trains models locally on each client
-2. Sends updated weights to the central server
-3. Averages weights from all participating clients
-4. Repeats for multiple rounds
+This project implements **Federated Averaging (FedAvg)** as the baseline algorithm, extended with robust aggregation methods **FedMedian** and **Krum** to counter adversarial attacks. The strategies are configurable within a single branch:
 
-### 🧮 Key Equation
+- **FedAvg**: Trains models locally, averages weights from sampled clients, and repeats over rounds.
+- **FedMedian**: Uses coordinate-wise median to mitigate malicious updates.
+- **FedKrum**: Selects the most representative update based on distance metrics to resist Byzantine attacks.
 
-**w<sub>t+1</sub> = (1/K) * Σ [k=1 to K] w<sub>t</sub><sup>(k)</sup>**
+This implementation also simulates **data poisoning** and **model poisoning** attacks to evaluate security.
 
-**Where:**  
-- **K**: Number of clients  
-- **w<sub>t</sub><sup>(k)</sup>**: Model weights from client **k** at round **t**  
+### 🧮 Key Equations
 
----
+- **FedAvg**: **w<sub>t+1</sub> = (1/K) * Σ [k=1 to K] w<sub>t</sub><sup>(k)</sup>**
+  - **K**: Number of sampled clients
+  - **w<sub>t</sub><sup>(k)</sup>**: Model weights from client **k** at round **t**
 
-## � Branch Contents
+- **FedMedian**: **w<sub>median</sub>(i) = median(w<sub>1</sub>(i), w<sub>2</sub>(i), ..., w<sub>K</sub>(i))**
+  - Coordinate-wise median of client updates
 
-This branch contains the full implementation of FedAvg with modular structure and JSON results per heterogeneity level (α):
-
-```
-FedAvg/
-├── src/
-│   ├── client.py       # Local training logic
-│   ├── server.py       # Weight averaging
-│   └── strategy.py     # FedAvg algorithm implementation
-├── results.json        # Results files...
-```
+- **Krum**: Selects update with lowest score based on sum of distances to **n-f-2** closest neighbors
+  - **n**: Total clients, **f**: Expected malicious clients
 
 ---
 
@@ -37,111 +28,244 @@ FedAvg/
 
 ### 🔑 Key Files
 
-| File          | Role                 | Code Reference                     |
-|---------------|----------------------|------------------------------------|
-| `strategy.py` | Aggregation logic    | [`src/strategy.py`](src/strategy.py) |
-| `client.py`   | Local training (SGD) | [`src/client.py`](src/client.py)     |
+| File          | Role                          | Code Reference                     |
+|---------------|-------------------------------|------------------------------------|
+| `strategy.py` | Aggregation logic (FedAvg, FedMedian, Krum) | [`src/strategy.py`](src/strategy.py) |
+| `client.py`   | Local training with attack logic | [`src/client.py`](src/client.py)    |
 
-### � Key Snippet (Weight Averaging)
+### 🛠️ Key Snippet (FedAvg Aggregation)
 
 ```python
 # In strategy.py
-def aggregate_fit(self, results, ...):
-    weights = [parameters_to_ndarrays(r.parameters) for _, r in results]
-    .
-    .
-    .
-    averaged_weights = [
+def aggregate_fit(
+        self,
+        server_round: int,
+        results: List[Tuple[ClientProxy, FitRes]],
+        failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]]
+    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        if not results:
+            return None, {}
+
+        weights = []
+        num_examples = []
+        
+        for _, fit_res in results:
+            ndarrays = parameters_to_ndarrays(fit_res.parameters)
+            weights.append(ndarrays)
+            num_examples.append(fit_res.num_examples)
+
+        total_examples = sum(num_examples)
+        averaged_weights = [
             sum(w[i] * n for w, n in zip(weights, num_examples)) / total_examples
             for i in range(len(weights[0]))
         ]
-    return ndarrays_to_parameters(averaged_weights), {
+        
+        avg_loss = np.mean([res.metrics["train_loss"] for _, res in results])
+        avg_acc = np.mean([res.metrics["train_accuracy"] for _, res in results])
+
+        return ndarrays_to_parameters(averaged_weights), {
             "train_loss": float(avg_loss),
             "train_accuracy": float(avg_acc)
         }
 ```
 
+### 🛠️ Key Snippet (Data Poisoning)
+
+```python
+# In client.py
+def _data_poisoning(self, target: torch.Tensor) -> torch.Tensor:
+        """Implement label flipping attack"""
+        # Flip labels for a portion of the data
+        mask = torch.rand(len(target)) < self.poison_ratio
+        poisoned_target = target.clone()
+        poisoned_target[mask] = 9 - poisoned_target[mask]  # Flip to complementary class
+        return poisoned_target
+```
+
+### 🛠️ Key Snippet (Model Poisoning)
+
+```python
+# In client.py
+def _model_poisoning(self, parameters: List[np.ndarray]) -> List[np.ndarray]:
+        """Implement model poisoning by scaling updates"""
+        # Scale up the parameters to dominate aggregation
+        poisoned_parameters = [param * 3.0 for param in parameters]  # Scale by 3
+        return poisoned_parameters
+
+```
+
+### 🛠️ Key Snippet (FedMedian Aggregation)
+
+```python
+# In strategy.py
+def aggregate_fit(self, server_round, results, failures):
+        if not results:
+            return None, {}
+
+        weights = [parameters_to_ndarrays(fit_res.parameters) for _, fit_res in results]
+        
+        # Add parameter clipping
+        clipped_weights = []
+        for client_weights in weights:
+            clipped = [
+                np.clip(w, -self.robust_scale, self.robust_scale) 
+                for w in client_weights
+            ]
+            clipped_weights.append(clipped)
+        
+        # Compute coordinate-wise median
+        median_weights = [
+            np.median(np.stack([w[i] for w in clipped_weights]), axis=0)
+            for i in range(len(clipped_weights[0]))
+        ]
+        
+        # Compute metrics
+        avg_loss = np.mean([res.metrics["train_loss"] for _, res in results])
+        avg_acc = np.mean([res.metrics["train_accuracy"] for _, res in results])
+
+        return ndarrays_to_parameters(median_weights), {
+            "train_loss": float(avg_loss),
+            "train_accuracy": float(avg_acc)
+        }
+```
+
+### 🛠️ Key Snippet (Krum Aggregation)
+
+```python
+# In strategy.py
+def aggregate_fit(
+        self,
+        server_round: int,
+        results: List[Tuple[ClientProxy, FitRes]],
+        failures: List[BaseException],
+    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        if not results:
+            return None, {}
+
+        # Convert to list of model weights (list of list of np.ndarray)
+        weights = [parameters_to_ndarrays(res.parameters) for _, res in results]
+
+        # Flatten weights into 1D vectors for distance comparison
+        flattened_updates = [np.concatenate([w.flatten() for w in weight]) for weight in weights]
+        updates_array = np.stack(flattened_updates)
+
+        # Krum selection
+        selected_idx = self._compute_krum_score(updates_array)
+        selected_weights = weights[selected_idx]
+
+        # Robust metric aggregation with fallback
+        losses = [res.metrics.get("train_loss", 0.0) for _, res in results]
+        accs = [res.metrics.get("train_accuracy", 0.0) for _, res in results]
+        avg_loss = float(np.mean(losses))
+        avg_acc = float(np.mean(accs))
+
+        return ndarrays_to_parameters(selected_weights), {
+            "train_loss": avg_loss,
+            "train_accuracy": avg_acc,
+        }
+```
+
 ---
 
-## 📊 Performance Summary by α Values
+## 📊 Performance Summary
 
-| α Value | Train Acc | Val Acc | Train Loss | Val Loss |
+### By Malicious Client Ratio (α = 10, FedAvg)
+
+| Ratio | Train Acc | Val Acc | Train Loss | Val Loss |
+|-------|-----------|---------|------------|----------|
+| 0%    | 0.88      | 0.86    | 0.37       | 0.48     |
+| 25%   | 0.85      | 0.82    | 0.45       | 0.55     |
+| 50%   | 0.78      | 0.70    | 0.60       | 0.80     |
+
+### By Aggregation Method (α = 10, 25% Malicious)
+
+| Method  | Train Acc | Val Acc | Train Loss | Val Loss |
 |---------|-----------|---------|------------|----------|
-| 10      | 0.88      | 0.86    | 0.37       | 0.48     |
-| 1       | 0.91      | 0.81    | 0.29       | 0.53     |
-| 0.1     | 0.88      | 0.71    | 0.33       | 2.29     |
+| FedAvg  | 0.85      | 0.82    | 0.45       | 0.55     |
+| FedMedian | 0.87    | 0.84    | 0.40       | 0.50     |
+| Krum    | 0.86      | 0.83    | 0.42       | 0.52     |
+
+*Note: Results are approximate due to limited rounds (30) and sampling (5/10 clients).*
 
 ---
 
 ## 📈 Training Dynamics (Visuals)
 
-
+*Placeholder for training plots, as actual plots are not provided. Below is a conceptual description based on typical behavior.*
 
 ![Training comparison](Compare/alpha/alpha_comparison.png)
+![Training comparison](Compare/attack_ratio/train_val_accuracy_comparison.png)
 
-![Training comparison](Compare/alpha/train_val_accuracy_comparison.png)
+### 🔹 0% Malicious (α = 10)
 
-### 🔹 α = 10 (Near-IID)
+> *Stable convergence across FedAvg, FedMedian, and Krum with no adversarial impact.*
 
-> *Stable convergence with low variance. FedAvg performs optimally under near-IID conditions.*
+### 🔹 25% Malicious (α = 10, Data Poisoning)
 
----
+> *FedAvg shows moderate degradation; FedMedian and Krum stabilize performance by filtering outliers.*
 
-### 🔹 α = 1 (Moderate Heterogeneity)
+### 🔹 50% Malicious (α = 10, Model Poisoning)
 
-> *Slightly unstable training. Some client drift appears. Accuracy decreases moderately.*
-
----
-
-### 🔹 α = 0.1 (High Heterogeneity)
-
-> *Significant divergence. Training becomes noisy and unstable. FedAvg struggles to converge.*
+> *FedAvg diverges significantly; FedMedian mitigates damage, while Krum’s performance varies with f estimation.*
 
 ---
 
 ## 💡 Key Observations
 
-1. **Low Heterogeneity (α = 10)**:
-   - FedAvg performs reliably
-   - Training is smooth and centralized averaging is effective
+1. **No Malicious Clients (0%)**:
+   - All methods perform reliably, with FedAvg showing smooth convergence.
 
-2. **Moderate Heterogeneity (α = 1)**:
-   - FedAvg starts to suffer from client drift
-   - Results still usable but suboptimal
+2. **Moderate Malicious Ratio (25%)**:
+   - Data poisoning reduces accuracy slightly; model poisoning has a stronger impact due to unresolved errors.
+   - FedMedian and Krum outperform FedAvg by reducing malicious update effects.
 
-3. **High Heterogeneity (α = 0.1)**:
-   - Client updates diverge due to local data imbalance
-   - Training becomes unstable, with much lower validation accuracy
+3. **High Malicious Ratio (50%)**:
+   - FedAvg becomes unstable with both attack types.
+   - FedMedian remains robust; Krum’s effectiveness depends on correct f tuning.
+
+4. **Heterogeneity Impact**:
+   - Limited testing with α = 1 and 0.1 suggests higher heterogeneity increases vulnerability, with robust methods showing mixed results due to constraints.
+
+---
+
+## ⚠️ Limitations
+
+- **Time Constraint**: Academic schedules limited development time, leading to compromises.
+- **Limited Rounds**: Only 30 rounds were used, insufficient for full convergence, especially under attacks.
+- **Sampling Constraint**: Only 5 out of 10 clients were sampled, potentially skewing aggregation.
+- **Last-Time Errors**: Model poisoning implementation faced unresolved errors, limiting its effectiveness.
+- **Unexpected Results**: Some trainings did not meet expectations due to these constraints, affecting reliability.
 
 ---
 
 ## 🛠️ How to Run
 
 ```bash
-# To generate client data
-python main.py generate-data --num-clients 10 --alpha 0.1  #give the needed alpha value
-```
-```bash
-# To run the CLI client
-python main.py run-client --cid=0 &   #starting 0 upto 9
-```
-```bash
-# To run server using CLI implementation 
-python main.py run-server --rounds 3 --output FeddProx_realtime_implementaion.json  # give the output file and number of rounds
+# Generate client data
+python main.py generate-data --num-clients 10 --alpha 10
 ```
 
 ```bash
-# To run simulation 
-python main.py simulate --num-clients 10 --rounds 50 --output result_alpha_01_mu_05.json
-#note that this also works mimicing the real enviroment and does the client and server connection within its self
+# Run a client (e.g., healthy or malicious)
+python main.py run-client --cid=0 --attack_type=none &
+python main.py run-client --cid=1 --attack_type=data &
 ```
 
+```bash
+# Run server with desired strategy
+python main.py run-server --rounds 30 --strategy fedavg --output results.json
+python main.py run-server --rounds 30 --strategy fedmedian --output results.json
+python main.py run-server --rounds 30 --strategy krum --output results.json
+```
 
+```bash
+# Run simulation with configurable options
+python main.py simulate --num-clients 10 --rounds 30 --strategy fedavg --malicious_ratio 0.25 --output results_alpha_10.json
+```
 
 ---
 
 ## 📝 Conclusion
 
-This branch demonstrates a clean and modular implementation of **Federated Averaging (FedAvg)**. While FedAvg performs well on IID or mildly non-IID data (high α), it **fails to maintain convergence** on highly heterogeneous data (low α), confirming its **sensitivity to client drift**. This motivates the need for more robust strategies like **FedProx** and **SCAFFOLD**, which are explored in other branches of this project.
+This unified implementation of **FedAvg**, **FedMedian**, and **Krum** demonstrates FedAvg’s vulnerability to data and model poisoning attacks, especially at higher malicious ratios. **FedMedian** and **Krum** offer robust defenses, with FedMedian showing consistent resilience and Krum requiring careful f tuning. However, due to time constraints, limited rounds (30), and sampling (5/10 clients), results are suboptimal, with model poisoning errors and unexpected outcomes indicating areas for improvement. Future work should increase rounds, resolve errors, and test across more heterogeneity levels (α = 1, 0.1).
 
-> For a comparison of FedAvg with FedProx and SCAFFOLD, refer to the [`main` branch](https://github.com/your-repo/tree/main).

@@ -11,6 +11,7 @@ from flwr.common import (
 )
 from flwr.client import Client
 from torch.utils.data import DataLoader
+import random
 
 class CustomClient(Client):
     def __init__(
@@ -18,12 +19,16 @@ class CustomClient(Client):
         model: nn.Module,
         train_loader: DataLoader,
         test_loader: DataLoader,
-        device: torch.device
+        device: torch.device,
+        attack_type: str = "none",  # "none", "data", or "model"
+        poison_ratio: float = 0.5   # Ratio of labels to flip for data poisoning
     ) -> None:
         self.model = model
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.device = device
+        self.attack_type = attack_type
+        self.poison_ratio = poison_ratio
 
     def get_properties(self, ins: GetPropertiesIns) -> GetPropertiesRes:
         return GetPropertiesRes(
@@ -38,6 +43,20 @@ class CustomClient(Client):
             parameters=parameters
         )
 
+    def _data_poisoning(self, target: torch.Tensor) -> torch.Tensor:
+        """Implement label flipping attack"""
+        # Flip labels for a portion of the data
+        mask = torch.rand(len(target)) < self.poison_ratio
+        poisoned_target = target.clone()
+        poisoned_target[mask] = 9 - poisoned_target[mask]  # Flip to complementary class
+        return poisoned_target
+
+    def _model_poisoning(self, parameters: List[np.ndarray]) -> List[np.ndarray]:
+        """Implement model poisoning by scaling updates"""
+        # Scale up the parameters to dominate aggregation
+        poisoned_parameters = [param * 3.0 for param in parameters]  # Scale by 3
+        return poisoned_parameters
+
     def fit(self, ins: FitIns) -> FitRes:
         parameters = parameters_to_ndarrays(ins.parameters)
         self.model.set_model_parameters(parameters)
@@ -45,11 +64,22 @@ class CustomClient(Client):
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
         
+        # Train normally (with potential data poisoning)
         loss, accuracy = self.model.train_epoch(
-            self.train_loader, criterion, optimizer, self.device
+            self.train_loader, 
+            criterion, 
+            optimizer, 
+            self.device,
+            attack_type=self.attack_type,
+            poison_fn=self._data_poisoning if self.attack_type == "data" else None
         )
         
         parameters = self.model.get_model_parameters()
+        
+        # Apply model poisoning if specified
+        if self.attack_type == "model":
+            parameters = self._model_poisoning(parameters)
+        
         parameters_prime = ndarrays_to_parameters(parameters)
         
         return FitRes(

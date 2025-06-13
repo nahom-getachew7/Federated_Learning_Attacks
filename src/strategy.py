@@ -23,7 +23,7 @@ class FedAvgStrategy(Strategy):
         timeout = 60  
         start_time = time.time()
         
-        while client_manager.num_available() < 1:
+        while client_manager.num_available() < 2:
             if time.time() - start_time > timeout:
                 raise RuntimeError("Timeout: No clients connected to server.")
                 time.sleep(1)
